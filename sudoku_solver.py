@@ -19,44 +19,63 @@ c_reset = '\033[0m'
 
 ChainColor = Enum('ChainColor', 'ON OFF')
 
+class SolverException(Exception):
+    pass
+
+class NoStringInputError(SolverException):
+    def __init__(self, message='Needs input string for game initialization if game is not being created'):
+        self.message = message
+        super().__init__(self.message)
+
+class CreateNInputStringConflictError(SolverException):
+    def __init__(self, message='Cannot create game and have input string to solve a game'):
+        self.message = message
+        super().__init__(self.message)
+
+class WrongInputLengthError(SolverException):
+    pass
+
+class WrongInputTypeError(SolverException):
+    pass
 
 class SudokuGame:
     LTSEQ = list(product(range(0, 7, 3), repeat=2))
     BSEQ = list(product(range(3), repeat=2))
     RCSEQ = list(range(9))
+    RCTUPSEQ = list(product(range(9), repeat=2))
     CHRSEQ = ''.join([str(x) for x in list(range(1, 10))])
 
-    def __init__(self, arr: str = '', create=False):
+    def __init__(self, arr: str='', create: bool=False, solve: bool=True):
         if arr == '' and not create:
-            arr = 'ERROR: Needs input string for game initialization if game is not being created'
-            print(arr)
-            return
+            raise NoStringInputError()
         elif arr != '' and create:
-            arr = 'ERROR: Cannot create game and have input string to solve a game'
-            print(arr)
-            return
+            raise CreateNInputStringConflictError()
 
         if create:
-            arr = [0] * 81
+            # arr = [0] * 81
+            raise NotImplementedError
         else:
             if type(arr) == str:
-                arr = [int(x) for x in arr] if len(arr) == 81 else 'ERROR: Wrong input length: needs 81 nums as str'
+                if len(arr) == 81:
+                    arr = [int(x) for x in arr]
+                else:
+                    raise WrongInputLengthError(f'Wrong input length: needs 81 nums as str: given {len(arr)} nums')
             else:
-                arr = 'ERROR: Wrong input type: needs str'
-            
-            if type(arr) == str:
-                print(arr)
-                return
+                raise WrongInputTypeError(f'Wrong input type: needs str: given {type(arr)}')
 
-        self.arr = np.array(arr).reshape(9, 9).tolist()
+        self.arr = np.array(arr).reshape(9, 9).tolist() # using numpy to reshape flat array
         self.added = []
 
         self.init_arr()
-        self.remaining = 81 - sum([1 if type(self.arr[row][col]) == int else 0 for row, col in product(range(9), repeat=2)])
+        # number of places still left to definitively fill up
+        self.remaining = 81 - sum([1 if type(self.arr[row][col]) == int else 0 for row, col in self.RCTUPSEQ])
         self.analysis = Analysis(self.get_num_psbl_nums(), init_arr=deepcopy(self.arr))
 
         if create:
-            self.create_game()
+            raise NotImplementedError
+            # self.create_game()
+        elif solve:
+            self.solve()
 
     def __repr__(self):
         self.analysis.plot()
@@ -114,7 +133,11 @@ class SudokuGame:
         self.analysis_func_append(func)
 
     def init_arr(self):
-        for row, col in product(range(9), repeat=2):
+        '''Convert zeros to possible values as strings in the array.
+        Possible values are determined using elementary elimination based on
+        existance of same number in row or column or box.'''
+
+        for row, col in self.RCTUPSEQ:
             if self.arr[row][col] == 0:
                 self.arr[row][col] = self.CHRSEQ
                 for idx in range(9):
@@ -128,7 +151,7 @@ class SudokuGame:
     def create_game(self):
         for row in range(9):
             for col in range(9):
-                self.solve_singles()
+                self.add_singles()
                 v = self.arr[row][col]
                 if type(v) == str:
                     l = [int(x) for x in v]
@@ -137,12 +160,25 @@ class SudokuGame:
                     self.print_psbl()
 
     def get_num_psbl_nums(self):
-        return sum([len(v) for row, col in product(range(9), repeat=2) if type((v := self.arr[row][col])) == str])
+        return sum([len(v) for row, col in self.RCTUPSEQ if type((v := self.arr[row][col])) == str])
 
     def get_num_psbl_nodes(self):
-        return int(math.prod([len(v) for row, col in product(range(9), repeat=2) if type((v := self.arr[row][col])) == str]))
+        return int(math.prod([len(v) for row, col in self.RCTUPSEQ if type((v := self.arr[row][col])) == str]))
 
-    def add(self, row, col, n: int, chain = False):
+    def add(self, row: int, col: int, n: int, chain: bool=False):
+        '''
+        Sets position (row, col) to value n and then eliminates n from
+        all possibilities in row, column, and box.
+        
+            Params:
+                row (int): row to set n
+                col (int): column to set n
+                n (int): value to set at (row, col)
+                chain (bool) [False]: TODO
+
+            Return:
+        '''
+
         self.added.append((row, col))
         self.remaining -= 1
 
@@ -211,21 +247,28 @@ class SudokuGame:
         
         return elim_cnt, elim_lst
 
-    def elim(self, row, col, lst: str | list[str], invert=False, chain=False):
-        lst = ''.join(set(self.CHRSEQ) - set(lst if type(lst) == str else ''.join(lst))) if invert else lst
+    def elim(self, row: int, col: int, vals: str | list[str], invert=False, chain=False):
+        '''
+        Given a (row, col) and lst
+        '''
+
+        # vals = ''.join(set(self.CHRSEQ) - set(vals if type(vals) == str else ''.join(vals))) if invert else vals
+        if invert:
+            vals = set(self.CHRSEQ) - set(vals)
+        
         elim_lst = []
-        for char in lst:
+        for char in vals:
             if type((v := self.arr[row][col])) == str and char in v:
                 self.arr[row][col] = v.replace(char, '')
                 elim_lst.append(int(char))
         ret_char = 'ce' if chain else 'e'
         return len(elim_lst), [(ret_char, row, col, elim_lst) if len(elim_lst) > 0 else None]
 
-    def solve_singles(self):
+    def add_singles(self):
         elim_cnt = 0
         while True:
             old = self.get_num_psbl_nums()
-            for row, col in product(range(9), repeat=2):
+            for row, col in self.RCTUPSEQ:
                 if type((v := self.arr[row][col])) == str and len(v) == 1:
                     elim = self.add(row, col, int(v))
                     elim_cnt += elim[0]
@@ -233,9 +276,9 @@ class SudokuGame:
             if self.get_num_psbl_nums() == old:
                 break
         if elim_cnt > 0:
-            self.analysis_func_append(self.solve_singles)
+            self.analysis_func_append(self.add_singles)
 
-    def solve_hidden_singles(self):
+    def add_hidden_singles(self):
         elim_cnt = 0
         while True:
             old = self.get_num_psbl_nums()
@@ -269,7 +312,7 @@ class SudokuGame:
                 break
         
         if elim_cnt > 0:
-            self.analysis_func_append(self.solve_hidden_singles)
+            self.analysis_func_append(self.add_hidden_singles)
 
     def elim_naked_pairs(self):
         elim_cnt = 0
@@ -1265,21 +1308,27 @@ class SudokuGame:
         if elim_cnt > 0:
             self.analysis_func_append(self.elim_x_cycles)
     
-    def solve_add_strategies(self):
+    def run_add_strategies(self) -> bool:
+        '''Execute self.solve_singles() and self.solve_hidden_singles():
+        the only two functions that adds finalized numbers to the sudoku board.'''
+
+        # continue loop until no new additions through both self.solve_singles() and self.solve_hidden_singles()
         while True:
             old = len(self.added)
-            self.solve_singles()
-            if not self.remaining:
+            self.add_singles()
+            if self.remaining == 0:
                 break
-            if len(self.added) == old:
-                self.solve_hidden_singles()
-                if not self.remaining:
+            if len(self.added) == old: # no new additions via self.solve_singles()
+                self.add_hidden_singles()
+                if self.remaining == 0 or len(self.added) == old:
                     break
-                if len(self.added) == old:
-                    break
-        return self.remaining != 0
+        return self.remaining > 0
 
-    def solve_elim_strategies(self):
+    def run_elim_strategies(self):
+        '''Execute elimination stategies to eliminate possibilities.'''
+        
+        # TODO: shuffle strategies to find optimal route of least functional executions
+        
         strategies = [
             self.elim_naked_pairs,
             self.elim_naked_triples,
@@ -1295,19 +1344,24 @@ class SudokuGame:
             self.elim_xyz_wing,
             self.elim_x_cycles,
         ]
+
+        # if any elim strategy eliminates even one possibility, run add strategies
+        # before trying other elim stategies.
         for f in strategies:
             old = self.get_num_psbl_nums()
             f()
-            if self.get_num_psbl_nums() != old:
+            if self.get_num_psbl_nums() < old:
                 return True
         return False
 
     def solve(self):
+        '''Main loop that controls the switching between elimination and addition.'''
+        
         while True:
-            remaining = self.solve_add_strategies()
+            remaining = self.run_add_strategies()
             if not remaining:
                 break
-            try_add = self.solve_elim_strategies()
+            try_add = self.run_elim_strategies()
             if not try_add:
                 break
         self.analysis.end_arr = deepcopy(self.arr)
